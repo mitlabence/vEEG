@@ -32,7 +32,7 @@ class Recorder:
     def __init__(self,
                  save_root_path,
                  experiment_name,
-                 max_file_length=5,
+                 max_file_length=30,
                  camera_index=0,
                  camera_fps=50,
                  microphone_tag='pett',
@@ -126,7 +126,7 @@ class Recorder:
             if self.video_frames_queue.empty():
                 continue
             current_time, frame = self.video_frames_queue.get()
-            if self.n_recorded_frames % 10 == 0:
+            if self.n_recorded_frames % 50 == 0:  # write to GUI video queue infrequently
                 self.cv2_frames_queue.put((current_time, frame.copy()))
             if current_time < self.start_time:
                 continue
@@ -290,6 +290,9 @@ class Recorder:
         cv2.namedWindow('frame', cv2.WND_PROP_FULLSCREEN)
         cv2.setWindowProperty(
             'frame', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        current_time = 0
+        video_frame = np.zeros(
+            (self.video_height, self.video_width), dtype=np.uint8)
         while self.camera.IsGrabbing() and self.audio_stream.is_active():
             if self.cv2_frames_queue.empty():
                 continue
