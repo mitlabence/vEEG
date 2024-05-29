@@ -126,7 +126,8 @@ class Recorder:
             if self.video_frames_queue.empty():
                 continue
             current_time, frame = self.video_frames_queue.get()
-            if self.n_recorded_frames % 50 == 0:  # write to GUI video queue infrequently
+            # write to GUI video queue infrequently to avoid queue getting larger and larger
+            if self.n_recorded_frames % 5 == 0:
                 self.cv2_frames_queue.put((current_time, frame.copy()))
             if current_time < self.start_time:
                 continue
