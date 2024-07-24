@@ -1,0 +1,34 @@
+
+0. 
+
+1. open Anaconda Prompt twice
+2. in both terminals, enter: conda activate pylon 
+	(base) should change to (pylon) in beginning of each line
+3. Move to "C:\Code\vEEG" by entering the command: cd C:\\Code\\vEEG
+	Optional: see Optional 1. and Optional 2.
+4. In one terminal, copy (but do not yet run): python plon_recorder.py --qm False --mictag "(Pett" --name "setup1" --cind 0
+5. In the other terminal, copy (but not run):  python plon_recorder.py --qm False --mictag "(2- Pett" --name "setup2" --cind 1
+6. Run both entered commands in the two Anaconda Prompt windows by clicking on Prompt, pressing Enter, choosing other Prompt, pressing Enter. Recording should begin soon after.
+
+TODO: write acqknowledge
+
+Optional 1. To find out which microphone is which:
+	1. Enter the following command: python show_available_microphones.py 
+  		this lists all the available microphones, enclosed in {}. There should be two Pettersson microphones: 
+		Microphone (Pettersson M500-384kHz USB Ultrasound Microphone)
+		Microphone (2- Pettersson M500-384kHz USB Ultrasound Microphone)
+  		The script assumes these two are present and these two should be used. If the names are different, one must get parts of these names such that each part is only present in one of the devices ("(Pett" for microphone 1 works, but "Pett" would not work, as this is also exactly present in the second name. "(2- Pett" works for microphone 2, as this is not in the name of the first microphone). 
+	2. If the names differ from the above, or if it is important to know which microphone has which name, unplug one of the microphones.
+	3. Run again python show_available_microphones.py 
+	4. The only Pettersson microphone detected is the one plugged in.
+	5. Reconnect the other microphone. If the command is run again, the second name will also be visible.
+	6. Find parts of the name (or the whole name) that are only in one of the microphone names (see step 1.)
+	7. Replace "(Pett" and "(2- Pett" in Step 4-5 with these parts of the names. To get the matching camera index, see Optional 2.
+
+Optional 2. To find out which camera is which:
+	1. Enter the following command: python show_available_cameras.py
+	2. The output lines should be: Device #<number>: Camera <camera name> (<some number>)
+		<number> is the number that should come after --cind (i.e. step 4: <number> is assumed to be 0, in step 5, it is 1)
+		<camera name> is the name of the camera with that index. Use these names (also visible in Pylon) to identify cameras.
+	3. Change the commands in step 4 and 5 as necessary, by replacing the number after --cind with the camera index.
+
