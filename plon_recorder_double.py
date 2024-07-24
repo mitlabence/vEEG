@@ -365,9 +365,11 @@ if __name__ == '__main__':
     parser.add_argument('--root', type=str, default='recorder_output')
     parser.add_argument('--name', type=str, default='unspecified')
     args = parser.parse_args()
-    recorder0 = Recorder(args.root, args.name+"0", camera_index=0)
+    recorder0 = Recorder(args.root, args.name+"0", camera_index=0, microphone_tag="(pett")
     recorder1 = Recorder(args.root, args.name+"1",
-                         camera_index=1, quiet_mode=True)
+                         camera_index=1, quiet_mode=True, microphone_tag="2- (pett")
+    print("recorder0 run()")
     recorder0.run()
+    print("recorder1 run()")
     recorder1.run()
     # TODO: Ctrl+C to stop recording? If not, make sure quiet_mode does not influence recording
