@@ -37,6 +37,7 @@ class Recorder:
                  camera_fps=50,
                  microphone_tag='pett',
                  min_audio_chunk_size=1920,
+                 quiet_mode=False
                  ):
         self.save_root_path = Path(save_root_path)
         self.experiment_name = experiment_name
@@ -46,6 +47,7 @@ class Recorder:
         self.microphone_tag = microphone_tag
         self.min_audio_chunk_size = min_audio_chunk_size
         self.logger_queue = queue.PriorityQueue()
+        self.quiet_mode = quiet_mode
 
     def initialize_start_time(self):
         now = time.localtime()
@@ -98,7 +100,9 @@ class Recorder:
         self.video_fourcc = cv2.VideoWriter_fourcc(*'DIVX')
         self.camera.StartGrabbing(plon.GrabStrategy_LatestImageOnly)
         self.video_frames_queue = queue.PriorityQueue()
-        self.cv2_frames_queue = queue.PriorityQueue()
+        if not self.quiet_mode:
+            self.cv2_frames_queue = queue.PriorityQueue()
+        
 
     def video_recorder(self):
 
@@ -121,14 +125,18 @@ class Recorder:
             (self.video_width, self.video_height),
             isColor=False if self.video_pixel_format == 'Mono8' else True
         )
-        self.n_recorded_frames = 0
+        self.n_recorded_frames = 0  # only the frames written to a file
+        self.i_frame = 0  # all frames, for downsampling the GUI
         while self.camera.IsGrabbing() or not self.video_frames_queue.empty():
             if self.video_frames_queue.empty():
                 continue
             current_time, frame = self.video_frames_queue.get()
             # write to GUI video queue infrequently to avoid queue getting larger and larger
-            if self.n_recorded_frames % 5 == 0:
+            if self.i_frame == 10 and not self.quiet_mode:
                 self.cv2_frames_queue.put((current_time, frame.copy()))
+                self.i_frame = 0
+            else:
+                self.i_frame += 1
             if current_time < self.start_time:
                 continue
             self.video_output.write(frame)
@@ -252,7 +260,7 @@ class Recorder:
             self.audio_cache = np.roll(
                 self.audio_cache, -self.audio_chunk_size)
             np.copyto(self.audio_cache[-self.audio_chunk_size:], audio_chunk)
-            stft_thread = threading.Thread(target=perform_stft)
+            stft_thread = threading.Thread(target=perform_stft)  # FIXME: maybe this thread is delayed by a lot (because stft takes a long time?) So stft gets way behind audio stream
             stft_thread.start()
             stft_thread.join()
 
@@ -296,13 +304,18 @@ class Recorder:
             (self.video_height, self.video_width), dtype=np.uint8)
         while self.camera.IsGrabbing() and self.audio_stream.is_active():
             if self.cv2_frames_queue.empty():
-                continue
+                continue  
+                
             current_time, video_frame = self.cv2_frames_queue.get()
             video_frame = add_text(
                 video_frame, "RECORDING" if current_time >= self.start_time else "NOT RECORDING")/255
             audio_stft_frame = self.stft_cache.copy()
+            #print(audio_stft_frame.shape)
+            #print(type(audio_stft_frame[0, 0]))
+            #print(audio_stft_frame[0, 0].shape)
+            print(audio_stft_frame.T[self.freqs <= 125000, :].shape)
             audio_stft_frame = cv2.resize(
-                audio_stft_frame.T[self.freqs <= 125000, :][::-1, :], (self.video_width, self.video_height//4))
+                audio_stft_frame.T[self.freqs <= 125000, :][::-1, :], (self.video_width, self.video_height//4))  # [self.freqs <= 125000, :][::-1, :]
             frame = np.concatenate((video_frame, audio_stft_frame), axis=0)
             cv2.imshow('frame', frame)
             key = cv2.waitKey(1)
@@ -324,12 +337,14 @@ class Recorder:
         self.audio_thread = threading.Thread(target=self.audio_writer)
         self.audio_processor_thread = threading.Thread(
             target=self.audio_processor)
-        self.interface_thread = threading.Thread(target=self.interface)
+        if not self.quiet_mode:
+            self.interface_thread = threading.Thread(target=self.interface)
         self.video_recorder_thread.start()
         self.video_thread.start()
         self.audio_thread.start()
         self.audio_processor_thread.start()
-        self.interface_thread.start()
+        if not self.quiet_mode:
+            self.interface_thread.start()
         self.logger_thread = threading.Thread(target=self.logger)
         self.logger_thread.start()
 
@@ -348,6 +363,8 @@ class Recorder:
 
     def run(self):
         self.initialize()
+        print("Starting recorder")
+        print(f"qm: {self.quiet_mode}, camera_fps: {self.camera_fps}, max_file_length: {self.max_file_length}")
         self.start()
         self.stop()
 
@@ -357,6 +374,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', type=str, default='recorder_output')
     parser.add_argument('--name', type=str, default='unspecified')
+    parser.add_argument('--qm', type=str, default="False")
+    parser.add_argument('--mictag', type=str, default="Pett")
+    parser.add_argument('--cind', type=int, default=0)
+    quiet_mode = False
     args = parser.parse_args()
-    recorder = Recorder(args.root, args.name)
+    if args.qm == "True":
+        quiet_mode = True
+    recorder = Recorder(args.root, args.name, quiet_mode=quiet_mode, microphone_tag=args.mictag, camera_index=args.cind)
     recorder.run()
