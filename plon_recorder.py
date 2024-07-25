@@ -26,7 +26,13 @@ np.fft.irfftn = pyfftw.interfaces.numpy_fft.irfftn
 pyfftw.interfaces.cache.enable()
 
 # %%
+AUDIO_VISUALIZATION_RANGE_S = 3  # how many seconds to show in rolling audio spectrograph?
+VIDEO_FPS = 5  # frame rate of video to show, Hz
 
+
+# camera 50 fps
+# want to show at 10fps
+# then need to get each 5th frame
 
 class Recorder:
     def __init__(self,
@@ -48,6 +54,7 @@ class Recorder:
         self.min_audio_chunk_size = min_audio_chunk_size
         self.logger_queue = queue.PriorityQueue()
         self.quiet_mode = quiet_mode
+        self.n_frames_to_refresh = int(self.camera_fps/VIDEO_FPS)
 
     def initialize_start_time(self):
         now = time.localtime()
@@ -132,7 +139,7 @@ class Recorder:
                 continue
             current_time, frame = self.video_frames_queue.get()
             # write to GUI video queue infrequently to avoid queue getting larger and larger
-            if self.i_frame == 10 and not self.quiet_mode:
+            if self.i_frame == 50 and not self.quiet_mode:  # FIXME: self.n_frames_to_refresh does not work, refresh rate always too slow
                 self.cv2_frames_queue.put((current_time, frame.copy()))
                 self.i_frame = 0
             else:
@@ -241,9 +248,11 @@ class Recorder:
             sr=self.microphone_sampling_rate, n_fft=self.nfft)
         self.cache_size = 1 * self.microphone_sampling_rate
         self.nframes_cache = self.cache_size // self.hop_length
-        self.stft_cache = np.zeros((self.nframes_cache, self.freqs.shape[0]))
+        #self.stft_cache = np.zeros((self.nframes_cache, self.freqs.shape[0]))
+        self.audio_visualization_cache = np.zeros(self.microphone_sampling_rate*AUDIO_VISUALIZATION_RANGE_S)  # 3 seconds of microphone signal to show
         self.audio_cache = np.zeros(
             (self.nfft_hop_ratio-1)*self.hop_length+self.audio_chunk_size)
+
 
     def audio_processor(self):
         def perform_stft():
@@ -260,9 +269,12 @@ class Recorder:
             self.audio_cache = np.roll(
                 self.audio_cache, -self.audio_chunk_size)
             np.copyto(self.audio_cache[-self.audio_chunk_size:], audio_chunk)
-            stft_thread = threading.Thread(target=perform_stft)  # FIXME: maybe this thread is delayed by a lot (because stft takes a long time?) So stft gets way behind audio stream
-            stft_thread.start()
-            stft_thread.join()
+            # copy the recorded data to the visualization cache as well
+            self.audio_visualization_cache = np.roll(self.audio_visualization_cache, -self.audio_chunk_size)
+            np.copyto(self.audio_visualization_cache[-self.audio_chunk_size:], audio_chunk)
+            #stft_thread = threading.Thread(target=perform_stft)  # FIXME: maybe this thread is delayed by a lot (because stft takes a long time?) So stft gets way behind audio stream
+            #stft_thread.start()
+            #stft_thread.join()
 
     def logger(self):
         with open(self.log_save_path, 'w') as f:
@@ -300,8 +312,7 @@ class Recorder:
         cv2.setWindowProperty(
             'frame', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         current_time = 0
-        video_frame = np.zeros(
-            (self.video_height, self.video_width), dtype=np.uint8)
+
         while self.camera.IsGrabbing() and self.audio_stream.is_active():
             if self.cv2_frames_queue.empty():
                 continue  
@@ -309,13 +320,14 @@ class Recorder:
             current_time, video_frame = self.cv2_frames_queue.get()
             video_frame = add_text(
                 video_frame, "RECORDING" if current_time >= self.start_time else "NOT RECORDING")/255
-            audio_stft_frame = self.stft_cache.copy()
+            _, _, stft = signal.stft(self.audio_visualization_cache, nperseg=self.nfft, noverlap=self.audio_chunk_size -
+                                     self.hop_length, nfft=self.nfft, axis=0, padded=False, boundary=None)
+            audio_stft_frame = np.log10(np.abs(stft)).T  # self.stft_cache.copy()
             #print(audio_stft_frame.shape)
             #print(type(audio_stft_frame[0, 0]))
             #print(audio_stft_frame[0, 0].shape)
-            print(audio_stft_frame.T[self.freqs <= 125000, :].shape)
             audio_stft_frame = cv2.resize(
-                audio_stft_frame.T[self.freqs <= 125000, :][::-1, :], (self.video_width, self.video_height//4))  # [self.freqs <= 125000, :][::-1, :]
+                audio_stft_frame.T[self.freqs <= 125000, :][::-1, :], (self.video_width, self.video_height//4))
             frame = np.concatenate((video_frame, audio_stft_frame), axis=0)
             cv2.imshow('frame', frame)
             key = cv2.waitKey(1)
