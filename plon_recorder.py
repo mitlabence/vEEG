@@ -120,7 +120,32 @@ class Recorder:
 
             if self.camera.IsGrabbing() and grabResult.GrabSucceeded():
                 frame = grabResult.Array
-                self.video_frames_queue.put((current_time, frame))
+                # TODO: put try except ValueError: then print the frame? then raise the exception
+                try:
+                    self.video_frames_queue.put((current_time, frame))  # FIXME: sometimes crashes:
+                except ValueError:
+                    print("ValueError happened")
+                    print("current_time:")
+                    print(current_time)
+                    print("frame:")
+                    print(frame)
+                """
+                C:\Code\vEEG\plon_recorder.py:325: RuntimeWarning: divide by zero encountered in log10
+                audio_stft_frame = np.log10(np.abs(stft)).T  # self.stft_cache.copy()
+                Exception in thread Thread-1 (video_recorder):
+                Traceback (most recent call last):
+                File "C:\Anaconda\envs\pylon\Lib\threading.py", line 1045, in _bootstrap_inner
+                    self.run()
+                File "C:\Anaconda\envs\pylon\Lib\threading.py", line 982, in run
+                    self._target(*self._args, **self._kwargs)
+                File "C:\Code\vEEG\plon_recorder.py", line 123, in video_recorder
+                    self.video_frames_queue.put((current_time, frame))
+                File "C:\Anaconda\envs\pylon\Lib\queue.py", line 150, in put
+                    self._put(item)
+                File "C:\Anaconda\envs\pylon\Lib\queue.py", line 236, in _put
+                    heappush(self.queue, item)
+                ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+                """
             grabResult.Release()
 
     def video_writer(self):
