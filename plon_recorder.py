@@ -14,6 +14,8 @@ import queue  # standard lib
 import wave  # standard lib
 import argparse  # standard lib
 
+import pickle as pkl  # for debugging priority queue
+
 import pyfftw
 np.fft.fft = pyfftw.interfaces.numpy_fft.fft
 np.fft.ifft = pyfftw.interfaces.numpy_fft.ifft
@@ -121,31 +123,23 @@ class Recorder:
             if self.camera.IsGrabbing() and grabResult.GrabSucceeded():
                 frame = grabResult.Array
                 # TODO: put try except ValueError: then print the frame? then raise the exception
+                current_size = len(self.video_frames_queue.queue)
                 try:
-                    self.video_frames_queue.put((current_time, frame))  # FIXME: sometimes crashes:
+                    self.video_frames_queue.put((current_time, frame)) 
                 except ValueError:
-                    print("ValueError happened")
-                    print("current_time:")
-                    print(current_time)
-                    print("frame:")
-                    print(frame)
-                """
-                C:\Code\vEEG\plon_recorder.py:325: RuntimeWarning: divide by zero encountered in log10
-                audio_stft_frame = np.log10(np.abs(stft)).T  # self.stft_cache.copy()
-                Exception in thread Thread-1 (video_recorder):
-                Traceback (most recent call last):
-                File "C:\Anaconda\envs\pylon\Lib\threading.py", line 1045, in _bootstrap_inner
-                    self.run()
-                File "C:\Anaconda\envs\pylon\Lib\threading.py", line 982, in run
-                    self._target(*self._args, **self._kwargs)
-                File "C:\Code\vEEG\plon_recorder.py", line 123, in video_recorder
-                    self.video_frames_queue.put((current_time, frame))
-                File "C:\Anaconda\envs\pylon\Lib\queue.py", line 150, in put
-                    self._put(item)
-                File "C:\Anaconda\envs\pylon\Lib\queue.py", line 236, in _put
-                    heappush(self.queue, item)
-                ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
-                """
+                    print("Error while put()")
+                    print(f"Unfinished tasks: {self.video_frames_queue.unfinished_tasks}")
+                    print(f"current_time: {current_time}")
+                    print(f"frame shape: {frame.shape}")
+                    print(f"Queue: {[item[0] for item in self.video_frames_queue.queue]}")
+                    print(f"current_size: {current_size}")
+                    print("Writing to files...")
+                    with open(f"{self.microphone_tag}_priority_put.txt", "w") as f:
+                        for queue_item in self.video_frames_queue.queue:
+                            f.write(f"{queue_item[0]}, {queue_item[1].shape}\n")
+                    with open(f"{self.microphone_tag}_new_item_put.txt", "w") as f:
+                        f.write(f"{current_time}, {frame.shape}\n")
+                    raise Exception("error during put()")
             grabResult.Release()
 
     def video_writer(self):
@@ -162,7 +156,20 @@ class Recorder:
         while self.camera.IsGrabbing() or not self.video_frames_queue.empty():
             if self.video_frames_queue.empty():
                 continue
-            current_time, frame = self.video_frames_queue.get()
+            current_size = len(self.video_frames_queue.queue)
+            try:
+                current_time, frame = self.video_frames_queue.get()  # need to call task_done() after worker is done
+            except ValueError:
+                print("Error while get()")
+                print(f"Unfinished tasks: {self.video_frames_queue.unfinished_tasks}")
+                print(f"Queue: {[item[0] for item in self.video_frames_queue.queue]}")
+                print(f"current_size: {current_size}")
+                print(f"unfinished_tasks: {self.video_frames_queue.unfinished_tasks}")
+                print("Writing to file...")
+                with open(f"{self.microphone_tag}_priority_get.txt", "w") as f:
+                    for queue_item in self.video_frames_queue.queue:
+                        f.write(f"{queue_item[0]}, {queue_item[1].shape}\n")
+                raise Exception("get() error")
             # write to GUI video queue infrequently to avoid queue getting larger and larger
             if self.i_frame == 50 and not self.quiet_mode:  # FIXME: self.n_frames_to_refresh does not work, refresh rate always too slow
                 self.cv2_frames_queue.put((current_time, frame.copy()))
@@ -186,6 +193,7 @@ class Recorder:
                 )
                 self.n_recorded_frames = 0
         self.video_output.release()
+        self.video_frames_queue.task_done()
 
     def initialize_microphone(self):
         self.pyaudio = pyaudio.PyAudio()
@@ -248,7 +256,7 @@ class Recorder:
         while self.audio_stream.is_active() or not self.audio_chunks_queue.empty():
             if self.audio_chunks_queue.empty():
                 continue
-            current_time, audio_chunk = self.audio_chunks_queue.get()
+            current_time, audio_chunk = self.audio_chunks_queue.get()  # need to call task_done() once worker is done
             self.processing_audio_chunks_queue.put((current_time, audio_chunk))
             if current_time < self.start_time:
                 continue
@@ -300,6 +308,7 @@ class Recorder:
             #stft_thread = threading.Thread(target=perform_stft)  # FIXME: maybe this thread is delayed by a lot (because stft takes a long time?) So stft gets way behind audio stream
             #stft_thread.start()
             #stft_thread.join()
+            self.processing_audio_chunks_queue.task_done()
 
     def logger(self):
         with open(self.log_save_path, 'w') as f:
@@ -313,6 +322,7 @@ class Recorder:
                 f.write(
                     f'{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(current_time))}.{int((current_time - int(current_time)) * 1000):03d} {log}\n')
                 f.flush()
+                self.logger_queue.task_done()
 
     def initialize(self):
         self.initialize_start_time()
@@ -366,6 +376,7 @@ class Recorder:
                 self.logger_queue.put((time.time(), "Event"))
             elif key == ord('f'):
                 self.logger_queue.put((time.time(), "Trial ended"))
+            self.cv2_frames_queue.task_done()  # marks task done
 
     def start(self):
         self.video_recorder_thread = threading.Thread(
