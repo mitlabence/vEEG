@@ -27,6 +27,17 @@ np.fft.rfftn = pyfftw.interfaces.numpy_fft.rfftn
 np.fft.irfftn = pyfftw.interfaces.numpy_fft.irfftn
 pyfftw.interfaces.cache.enable()
 
+
+from dataclasses import dataclass, field
+#from typing import Any
+
+@dataclass(order=True)
+class PrioritizedFrame:
+    # basically the tuple (time, frame), but setting the numpy array as not comparable to avoid 
+    # ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+    priority: float
+    item: np.array=field(compare=False)
+
 # %%
 AUDIO_VISUALIZATION_RANGE_S = 3  # how many seconds to show in rolling audio spectrograph?
 VIDEO_FPS = 5  # frame rate of video to show, Hz
@@ -125,7 +136,7 @@ class Recorder:
                 # TODO: put try except ValueError: then print the frame? then raise the exception
                 current_size = len(self.video_frames_queue.queue)
                 try:
-                    self.video_frames_queue.put((current_time, frame)) 
+                    self.video_frames_queue.put(PrioritizedFrame(priority=current_time, item=frame)) 
                 except ValueError:
                     print("Error while put()")
                     print(f"Unfinished tasks: {self.video_frames_queue.unfinished_tasks}")
@@ -158,7 +169,9 @@ class Recorder:
                 continue
             current_size = len(self.video_frames_queue.queue)
             try:
-                current_time, frame = self.video_frames_queue.get()  # need to call task_done() after worker is done
+                prioritized_frame = self.video_frames_queue.get()  # need to call task_done() after worker is done
+                current_time = prioritized_frame.priority
+                frame = prioritized_frame.item 
             except ValueError:
                 print("Error while get()")
                 print(f"Unfinished tasks: {self.video_frames_queue.unfinished_tasks}")
@@ -172,7 +185,7 @@ class Recorder:
                 raise Exception("get() error")
             # write to GUI video queue infrequently to avoid queue getting larger and larger
             if self.i_frame == 50 and not self.quiet_mode:  # FIXME: self.n_frames_to_refresh does not work, refresh rate always too slow
-                self.cv2_frames_queue.put((current_time, frame.copy()))
+                self.cv2_frames_queue.put(PrioritizedFrame(priority=current_time, item=frame.copy()))
                 self.i_frame = 0
             else:
                 self.i_frame += 1
@@ -242,7 +255,7 @@ class Recorder:
     def audio_callback(self, in_data, frame_count, time_info, status):
         # ToDO: use time_info to sync audio and video frames
         current_time = time.time()
-        self.audio_chunks_queue.put((current_time, in_data))
+        self.audio_chunks_queue.put(PrioritizedFrame(priority=current_time, item=in_data))
         return (None, pyaudio.paContinue)
 
     def audio_writer(self):
@@ -256,8 +269,10 @@ class Recorder:
         while self.audio_stream.is_active() or not self.audio_chunks_queue.empty():
             if self.audio_chunks_queue.empty():
                 continue
-            current_time, audio_chunk = self.audio_chunks_queue.get()  # need to call task_done() once worker is done
-            self.processing_audio_chunks_queue.put((current_time, audio_chunk))
+            prioritized_frame = self.audio_chunks_queue.get()  # need to call task_done() once worker is done
+            current_time = prioritized_frame.priority 
+            audio_chunk = prioritized_frame.item
+            self.processing_audio_chunks_queue.put(PrioritizedFrame(priority=current_time, item=audio_chunk))
             if current_time < self.start_time:
                 continue
             self.audio_output.writeframes(audio_chunk)
@@ -297,7 +312,9 @@ class Recorder:
                 self.stft_cache[-self.nfft_hop_ratio:, :], np.log10(np.abs(stft)).T)
 
         while self.audio_stream.is_active() or not self.processing_audio_chunks_queue.empty():
-            _, audio_chunk = self.processing_audio_chunks_queue.get()
+            prioritized_frame = self.processing_audio_chunks_queue.get()
+            # not interested in priority (time)
+            audio_chunk = prioritized_frame.item
             audio_chunk = np.frombuffer(audio_chunk, dtype=np.int16)
             self.audio_cache = np.roll(
                 self.audio_cache, -self.audio_chunk_size)
@@ -352,7 +369,9 @@ class Recorder:
             if self.cv2_frames_queue.empty():
                 continue  
                 
-            current_time, video_frame = self.cv2_frames_queue.get()
+            prioritized_frame = self.cv2_frames_queue.get()
+            current_time = prioritized_frame.priority
+            video_frame = prioritized_frame.item
             video_frame = add_text(
                 video_frame, "RECORDING" if current_time >= self.start_time else "NOT RECORDING")/255
             _, _, stft = signal.stft(self.audio_visualization_cache, nperseg=self.nfft, noverlap=self.audio_chunk_size -
